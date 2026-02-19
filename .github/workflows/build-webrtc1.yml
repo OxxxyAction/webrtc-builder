@@ -11,6 +11,21 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+      - name: Free disk space
+        run: |
+          echo "Disk before cleanup:"
+          df -h
+      
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/.ghcup
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+      
+          docker system prune -af || true
+      
+          echo "Disk after cleanup:"
+          df -h
 
       # ---------------- Cache depot_tools ----------------
       - name: Cache depot_tools
