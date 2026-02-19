@@ -1,0 +1,100 @@
+name: Build WebRTC AAR (16KB)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: |
+          sudo apt update
+          sudo apt install -y git curl python3 python3-pip \
+            openjdk-17-jdk build-essential lsb-release
+
+      - name: Clone depot_tools
+        run: |
+          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git $HOME/depot_tools
+          echo "$HOME/depot_tools" >> $GITHUB_PATH
+
+      - name: Fetch WebRTC
+        run: |
+          mkdir webrtc-checkout
+          cd webrtc-checkout
+          fetch --nohooks webrtc
+
+      - name: Sync dependencies
+        run: |
+          cd webrtc-checkout/src
+          ./build/install-build-deps.sh --no-prompt
+          gclient sync
+
+      - name: Generate GN build (arm64)
+        run: |
+          cd webrtc-checkout/src
+          gn gen out/android_arm64 --args='
+            target_os="android"
+            target_cpu="arm64"
+            is_debug=false
+            is_component_build=false
+            rtc_build_examples=false
+            rtc_include_tests=false
+            use_rtti=true
+            is_clang=true
+            symbol_level=0
+            rtc_use_h264=true
+            extra_ldflags=["-Wl,-z,max-page-size=16384"]
+          '
+
+      - name: Build WebRTC AAR (arm64)
+        run: |
+          cd webrtc-checkout/src
+          ninja -C out/android_arm64 sdk/android:aar
+
+      - name: Generate GN build (arm)
+        run: |
+          cd webrtc-checkout/src
+          gn gen out/android_arm --args='
+            target_os="android"
+            target_cpu="arm"
+            is_debug=false
+            is_component_build=false
+            rtc_build_examples=false
+            rtc_include_tests=false
+            use_rtti=true
+            is_clang=true
+            symbol_level=0
+            rtc_use_h264=true
+            extra_ldflags=["-Wl,-z,max-page-size=16384"]
+          '
+
+      - name: Build WebRTC AAR (arm)
+        run: |
+          cd webrtc-checkout/src
+          ninja -C out/android_arm sdk/android:aar
+
+      - name: Merge AARs into single universal AAR
+        run: |
+          mkdir output
+          unzip webrtc-checkout/src/out/android_arm64/aar/webrtc.aar -d arm64
+          unzip webrtc-checkout/src/out/android_arm/aar/webrtc.aar -d arm
+
+          cp -R arm/* output/
+          cp -R arm64/jni/arm64-v8a output/jni/
+
+          cd output
+          zip -r ../webrtc-universal.aar *
+
+      - name: Upload AAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: webrtc-16kb-aar
+          path: webrtc-universal.aar
