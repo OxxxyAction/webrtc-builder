@@ -9,8 +9,14 @@ jobs:
       matrix:
         arch: [arm64, armv7]
     runs-on: ubuntu-22.04
+    timeout-minutes: 180
 
     steps:
+      # ---------------- Checkout ----------------
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # ---------------- Free disk ----------------
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet
@@ -18,26 +24,36 @@ jobs:
           sudo docker system prune -af || true
           df -h
 
-      - name: Install deps
+      # ---------------- Install dependencies ----------------
+      - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            git python3 openjdk-11-jdk \
-            ninja-build
+            git python3 python3-pip openjdk-17-jdk \
+            ninja-build curl unzip
 
+      # ---------------- Setup depot_tools ----------------
       - name: Setup depot_tools
         run: |
           git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
           echo "$PWD/depot_tools" >> $GITHUB_PATH
 
+      # ---------------- Fetch WebRTC ----------------
       - name: Fetch WebRTC
         run: |
-          fetch --nohooks --no-history webrtc
+          fetch --nohooks webrtc
           cd src
-          gclient sync --no-history
+          gclient sync
           gclient runhooks
 
-      - name: Generate build files
+      # ---------------- Install Android SDK (WebRTC) ----------------
+      - name: Install Android SDK for WebRTC
+        run: |
+          cd src
+          ./build/install-build-deps-android.sh
+
+      # ---------------- Generate GN build ----------------
+      - name: Generate GN build
         run: |
           cd src
           if [ "${{ matrix.arch }}" = "arm64" ]; then
@@ -52,19 +68,17 @@ jobs:
             target_os="android"
             target_cpu="'$TARGET_CPU'"
             is_debug=false
-            rtc_use_h264=true
-            rtc_enable_protobuf=false
+            is_component_build=false
             rtc_build_examples=false
-            rtc_build_tests=false
-            use_custom_libcxx=false
-            treat_warnings_as_errors=false
-            use_rtti=true
-            rtc_enable_symbol_export=true
-            enable_libaom=false
             rtc_include_tests=false
-            android_enable_16kb_pages=true
+            use_rtti=true
+            is_clang=true
+            symbol_level=0
+            rtc_use_h264=true
+            extra_ldflags=["-Wl,-z,max-page-size=16384"]
           '
 
+      # ---------------- Build libwebrtc ----------------
       - name: Build libwebrtc
         run: |
           cd src
@@ -74,8 +88,23 @@ jobs:
             ninja -C out/android_armv7 sdk/android:libwebrtc
           fi
 
-      - name: Upload .so
+      # ---------------- Build AAR ----------------
+      - name: Build AAR
+        run: |
+          cd src
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            python3 tools_webrtc/android/build_aar.py \
+              --build-dir out/android_arm64 \
+              --output webrtc-arm64.aar
+          else
+            python3 tools_webrtc/android/build_aar.py \
+              --build-dir out/android_armv7 \
+              --output webrtc-armv7.aar
+          fi
+
+      # ---------------- Upload artifacts ----------------
+      - name: Upload AAR
         uses: actions/upload-artifact@v4
         with:
           name: webrtc-${{ matrix.arch }}
-          path: src/out/android_*/obj/**/*.so
+          path: src/webrtc-*.aar
