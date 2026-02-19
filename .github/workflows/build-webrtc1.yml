@@ -1,22 +1,21 @@
-name: Build WebRTC AAR (16KB)
+name: Build WebRTC Universal AAR
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         arch: [arm64, armv7]
-    runs-on: ubuntu-22.04
     timeout-minutes: 180
 
     steps:
       # ---------------- Checkout ----------------
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # ---------------- Free disk ----------------
+      # ---------------- Free disk space ----------------
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet
@@ -39,18 +38,12 @@ jobs:
           echo "$PWD/depot_tools" >> $GITHUB_PATH
 
       # ---------------- Fetch WebRTC ----------------
-      - name: Fetch WebRTC
+      - name: Fetch WebRTC with hooks
         run: |
-          fetch --nohooks webrtc
+          fetch webrtc
           cd src
           gclient sync
           gclient runhooks
-
-      # ---------------- Install Android SDK (WebRTC) ----------------
-      - name: Install Android SDK for WebRTC
-        run: |
-          cd src
-          ./build/install-build-deps-android.sh
 
       # ---------------- Generate GN build ----------------
       - name: Generate GN build
@@ -102,9 +95,41 @@ jobs:
               --output webrtc-armv7.aar
           fi
 
-      # ---------------- Upload artifacts ----------------
+      # ---------------- Upload artifacts for merge ----------------
       - name: Upload AAR
         uses: actions/upload-artifact@v4
         with:
           name: webrtc-${{ matrix.arch }}
           path: src/webrtc-*.aar
+
+  merge:
+    runs-on: ubuntu-22.04
+    needs: build
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Merge AARs into universal
+        run: |
+          mkdir universal
+          unzip artifacts/webrtc-arm64/webrtc-arm64.aar -d universal/arm64
+          unzip artifacts/webrtc-armv7/webrtc-armv7.aar -d universal/armv7
+
+          # Копіюємо файли з armv7
+          cp -R universal/armv7/* universal/
+
+          # Замінюємо jni libs arm64
+          mkdir -p universal/jni/arm64-v8a
+          cp -R universal/arm64/jni/arm64-v8a/* universal/jni/arm64-v8a/
+
+          # Створюємо final AAR
+          cd universal
+          zip -r ../webrtc-universal.aar *
+
+      - name: Upload universal AAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: webrtc-universal-aar
+          path: webrtc-universal.aar
