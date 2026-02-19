@@ -12,43 +12,49 @@ jobs:
     timeout-minutes: 180
 
     steps:
-      # ---------------- Checkout ----------------
       - uses: actions/checkout@v4
 
-      # ---------------- Free disk space ----------------
+      # ---------- Free disk ----------
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
           sudo docker system prune -af || true
           df -h
 
-      # ---------------- Install dependencies ----------------
-      - name: Install system dependencies
+      # ---------- Install deps ----------
+      - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            git python3 python3-pip openjdk-17-jdk \
-            ninja-build curl unzip
+          sudo apt-get install -y git python3 openjdk-17-jdk ninja-build
 
-      # ---------------- Setup depot_tools ----------------
+      # ---------- Install Android SDK ----------
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platforms
+        run: |
+          yes | sdkmanager "platforms;android-36" \
+                          "build-tools;36.0.0" \
+                          "ndk;26.1.10909125"
+
+      # ---------- Setup depot_tools ----------
       - name: Setup depot_tools
         run: |
           git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
           echo "$PWD/depot_tools" >> $GITHUB_PATH
 
-      # ---------------- Fetch WebRTC ----------------
-      - name: Fetch WebRTC with hooks
+      # ---------- Fetch WebRTC ----------
+      - name: Fetch WebRTC
         run: |
-          fetch webrtc
+          fetch --nohooks webrtc
           cd src
           gclient sync
-          gclient runhooks
 
-      # ---------------- Generate GN build ----------------
+      # ---------- Generate GN ----------
       - name: Generate GN build
         run: |
           cd src
+
           if [ "${{ matrix.arch }}" = "arm64" ]; then
             OUT=out/android_arm64
             TARGET_CPU="arm64"
@@ -65,13 +71,14 @@ jobs:
             rtc_build_examples=false
             rtc_include_tests=false
             use_rtti=true
-            is_clang=true
             symbol_level=0
             rtc_use_h264=true
+            android_sdk_root="'"$ANDROID_SDK_ROOT"'"
+            android_ndk_root="'"$ANDROID_SDK_ROOT"'/ndk/26.1.10909125"
             extra_ldflags=["-Wl,-z,max-page-size=16384"]
           '
 
-      # ---------------- Build libwebrtc ----------------
+      # ---------- Build ----------
       - name: Build libwebrtc
         run: |
           cd src
@@ -81,7 +88,7 @@ jobs:
             ninja -C out/android_armv7 sdk/android:libwebrtc
           fi
 
-      # ---------------- Build AAR ----------------
+      # ---------- Build AAR ----------
       - name: Build AAR
         run: |
           cd src
@@ -95,42 +102,7 @@ jobs:
               --output webrtc-armv7.aar
           fi
 
-      # ---------------- Upload artifacts for merge ----------------
-      - name: Upload AAR
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: webrtc-${{ matrix.arch }}
           path: src/webrtc-*.aar
-
-  merge:
-    runs-on: ubuntu-22.04
-    needs: build
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Merge AARs into universal
-        run: |
-          mkdir universal
-          unzip artifacts/webrtc-arm64/webrtc-arm64.aar -d universal/arm64
-          unzip artifacts/webrtc-armv7/webrtc-armv7.aar -d universal/armv7
-
-          # Копіюємо файли з armv7
-          cp -R universal/armv7/* universal/
-
-          # Замінюємо jni libs arm64
-          mkdir -p universal/jni/arm64-v8a
-          cp -R universal/arm64/jni/arm64-v8a/* universal/jni/arm64-v8a/
-
-          # Створюємо final AAR
-          cd universal
-          zip -r ../webrtc-universal.aar *
-
-      - name: Upload universal AAR
-        uses: actions/upload-artifact@v4
-        with:
-          name: webrtc-universal-aar
-          path: webrtc-universal.aar
-          
