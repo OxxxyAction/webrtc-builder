@@ -30,7 +30,7 @@ jobs:
           git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
           echo "$PWD/depot_tools" >> $GITHUB_PATH
 
-      - name: Fetch WebRTC (minimal)
+      - name: Fetch WebRTC
         run: |
           fetch --nohooks --no-history webrtc
           cd src
