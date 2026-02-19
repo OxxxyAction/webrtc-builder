@@ -25,9 +25,15 @@ jobs:
       - name: Install system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y git python3 openjdk-17-jdk ninja-build
+          sudo apt-get install -y git python3 ninja-build
 
       # ---------- Install Android SDK ----------
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
