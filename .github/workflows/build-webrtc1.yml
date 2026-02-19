@@ -2,8 +2,6 @@ name: Build WebRTC AAR (16KB)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
 
 jobs:
   build:
@@ -37,6 +35,7 @@ jobs:
           ./build/install-build-deps.sh --no-prompt
           gclient sync
 
+      # ---------------- ARM64 ----------------
       - name: Generate GN build (arm64)
         run: |
           cd webrtc-checkout/src
@@ -54,11 +53,19 @@ jobs:
             extra_ldflags=["-Wl,-z,max-page-size=16384"]
           '
 
-      - name: Build WebRTC AAR (arm64)
+      - name: Build WebRTC (arm64)
         run: |
           cd webrtc-checkout/src
-          ninja -C out/android_arm64 sdk/android:aar
+          ninja -C out/android_arm64 sdk/android:libwebrtc
 
+      - name: Create AAR (arm64)
+        run: |
+          cd webrtc-checkout/src
+          python3 tools_webrtc/android/build_aar.py \
+            --build-dir out/android_arm64 \
+            --output webrtc-arm64.aar
+
+      # ---------------- ARMv7 ----------------
       - name: Generate GN build (arm)
         run: |
           cd webrtc-checkout/src
@@ -76,16 +83,24 @@ jobs:
             extra_ldflags=["-Wl,-z,max-page-size=16384"]
           '
 
-      - name: Build WebRTC AAR (arm)
+      - name: Build WebRTC (arm)
         run: |
           cd webrtc-checkout/src
-          ninja -C out/android_arm sdk/android:aar
+          ninja -C out/android_arm sdk/android:libwebrtc
 
-      - name: Merge AARs into single universal AAR
+      - name: Create AAR (arm)
+        run: |
+          cd webrtc-checkout/src
+          python3 tools_webrtc/android/build_aar.py \
+            --build-dir out/android_arm \
+            --output webrtc-arm.aar
+
+      # ---------------- Merge AARs ----------------
+      - name: Merge into universal AAR
         run: |
           mkdir output
-          unzip webrtc-checkout/src/out/android_arm64/aar/webrtc.aar -d arm64
-          unzip webrtc-checkout/src/out/android_arm/aar/webrtc.aar -d arm
+          unzip webrtc-checkout/src/webrtc-arm64.aar -d arm64
+          unzip webrtc-checkout/src/webrtc-arm.aar -d arm
 
           cp -R arm/* output/
           cp -R arm64/jni/arm64-v8a output/jni/
