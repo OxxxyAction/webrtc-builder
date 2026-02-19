@@ -34,6 +34,7 @@ jobs:
           cd webrtc-checkout/src
           ./build/install-build-deps.sh --no-prompt
           gclient sync
+          gclient runhooks
 
       # ---------------- ARM64 ----------------
       - name: Generate GN build (arm64)
