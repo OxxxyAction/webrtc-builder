@@ -5,139 +5,86 @@ on:
 
 jobs:
   build:
+    strategy:
+      matrix:
+        arch: [arm64, armv7]
     runs-on: ubuntu-22.04
-    timeout-minutes: 180
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
       - name: Free disk space
         run: |
-          echo "Disk before cleanup:"
-          df -h
-      
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
           sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/.ghcup
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-      
-          docker system prune -af || true
-      
-          echo "Disk after cleanup:"
+          sudo rm -rf /usr/local/lib/android
+          sudo docker system prune -af || true
           df -h
 
-      # ---------------- Cache depot_tools ----------------
-      - name: Cache depot_tools
-        id: cache-depot
-        uses: actions/cache@v4
-        with:
-          path: ~/depot_tools
-          key: depot-tools-v1
-
-      - name: Clone depot_tools
-        if: steps.cache-depot.outputs.cache-hit != 'true'
+      - name: Install deps
         run: |
-          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git $HOME/depot_tools
+          sudo apt-get update
+          sudo apt-get install -y \
+            git python3 python3-pip \
+            openjdk-11-jdk \
+            ninja-build
 
-      - name: Add depot_tools to PATH
-        run: echo "$HOME/depot_tools" >> $GITHUB_PATH
-
-      # ---------------- Cache WebRTC checkout ----------------
-      - name: Cache WebRTC source
-        id: cache-webrtc
-        uses: actions/cache@v4
-        with:
-          path: webrtc-checkout
-          key: webrtc-source-v1
-
-      - name: Fetch WebRTC (with hooks)
-        if: steps.cache-webrtc.outputs.cache-hit != 'true'
+      - name: Setup depot_tools
         run: |
-          mkdir webrtc-checkout
-          cd webrtc-checkout
-          fetch webrtc
+          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          echo "$PWD/depot_tools" >> $GITHUB_PATH
 
-      - name: Install build deps
+      - name: Fetch WebRTC (ultra-minimal)
         run: |
-          cd webrtc-checkout/src
-          ./build/install-build-deps.sh --no-prompt
+          fetch --nohooks --no-history webrtc
+          cd src
+          gclient sync --no-history
 
-      # ---------------- ARM64 build ----------------
-      - name: Generate GN build (arm64)
+      - name: Install Android SDK platform 36
         run: |
-          cd webrtc-checkout/src
-          gn gen out/android_arm64 --args='
+          cd webrtc-checkout/src || cd src
+          ./build/install-build-deps.sh --android
+
+          yes | third_party/android_sdk/public/tools/bin/sdkmanager \
+            "platforms;android-36"
+
+      - name: Generate build files
+        run: |
+          cd src
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            OUT=out/android_arm64
+            TARGET_CPU="arm64"
+          else
+            OUT=out/android_armv7
+            TARGET_CPU="arm"
+          fi
+
+          gn gen $OUT --args='
             target_os="android"
-            target_cpu="arm64"
+            target_cpu="'$TARGET_CPU'"
             is_debug=false
-            is_component_build=false
-            rtc_build_examples=false
-            rtc_include_tests=false
-            use_rtti=true
-            is_clang=true
-            symbol_level=0
             rtc_use_h264=true
-            extra_ldflags=["-Wl,-z,max-page-size=16384"]
+            rtc_enable_protobuf=false
+            rtc_build_examples=false
+            rtc_build_tests=false
+            use_custom_libcxx=false
+            treat_warnings_as_errors=false
+            use_rtti=true
+            rtc_enable_symbol_export=true
+            enable_libaom=false
+            rtc_include_tests=false
+            android_enable_16kb_pages=true
           '
 
-      - name: Build WebRTC (arm64)
+      - name: Build native lib
         run: |
-          cd webrtc-checkout/src
-          ninja -C out/android_arm64 sdk/android:libwebrtc
+          cd src
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            ninja -C out/android_arm64 sdk/android:libwebrtc
+          else
+            ninja -C out/android_armv7 sdk/android:libwebrtc
+          fi
 
-      - name: Create AAR (arm64)
-        run: |
-          cd webrtc-checkout/src
-          python3 tools_webrtc/android/build_aar.py \
-            --build-dir out/android_arm64 \
-            --output webrtc-arm64.aar
-
-      # ---------------- ARMv7 build ----------------
-      - name: Generate GN build (arm)
-        run: |
-          cd webrtc-checkout/src
-          gn gen out/android_arm --args='
-            target_os="android"
-            target_cpu="arm"
-            is_debug=false
-            is_component_build=false
-            rtc_build_examples=false
-            rtc_include_tests=false
-            use_rtti=true
-            is_clang=true
-            symbol_level=0
-            rtc_use_h264=true
-            extra_ldflags=["-Wl,-z,max-page-size=16384"]
-          '
-
-      - name: Build WebRTC (arm)
-        run: |
-          cd webrtc-checkout/src
-          ninja -C out/android_arm sdk/android:libwebrtc
-
-      - name: Create AAR (arm)
-        run: |
-          cd webrtc-checkout/src
-          python3 tools_webrtc/android/build_aar.py \
-            --build-dir out/android_arm \
-            --output webrtc-arm.aar
-
-      # ---------------- Merge AARs ----------------
-      - name: Merge into universal AAR
-        run: |
-          mkdir output
-          unzip webrtc-checkout/src/webrtc-arm64.aar -d arm64
-          unzip webrtc-checkout/src/webrtc-arm.aar -d arm
-
-          cp -R arm/* output/
-          cp -R arm64/jni/arm64-v8a output/jni/
-
-          cd output
-          zip -r ../webrtc-universal.aar *
-
-      - name: Upload AAR artifact
+      - name: Upload .so
         uses: actions/upload-artifact@v4
         with:
-          name: webrtc-16kb-aar
-          path: webrtc-universal.aar
+          name: webrtc-${{ matrix.arch }}
+          path: |
+            src/out/android_*/obj/**/*.so
