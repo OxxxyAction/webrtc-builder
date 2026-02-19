@@ -22,8 +22,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            git python3 python3-pip \
-            openjdk-11-jdk \
+            git python3 openjdk-11-jdk \
             ninja-build
 
       - name: Setup depot_tools
@@ -31,19 +30,12 @@ jobs:
           git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
           echo "$PWD/depot_tools" >> $GITHUB_PATH
 
-      - name: Fetch WebRTC (ultra-minimal)
+      - name: Fetch WebRTC (minimal)
         run: |
           fetch --nohooks --no-history webrtc
           cd src
           gclient sync --no-history
-
-      - name: Install Android SDK platform 36
-        run: |
-          cd webrtc-checkout/src || cd src
-          ./build/install-build-deps.sh --android
-
-          yes | third_party/android_sdk/public/tools/bin/sdkmanager \
-            "platforms;android-36"
+          gclient runhooks
 
       - name: Generate build files
         run: |
@@ -73,7 +65,7 @@ jobs:
             android_enable_16kb_pages=true
           '
 
-      - name: Build native lib
+      - name: Build libwebrtc
         run: |
           cd src
           if [ "${{ matrix.arch }}" = "arm64" ]; then
@@ -86,5 +78,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: webrtc-${{ matrix.arch }}
-          path: |
-            src/out/android_*/obj/**/*.so
+          path: src/out/android_*/obj/**/*.so
